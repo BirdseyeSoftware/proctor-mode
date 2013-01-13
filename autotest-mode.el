@@ -17,33 +17,62 @@
 ;; This is a work in progress
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defvar autotest-mode-buffer nil "..")
-(defcustom autotest-mode-buffer-name "autotest" "..")
-(defcustom autotest-screen-session-name "autotest" "..")
-(defcustom autotest-mode-command nil "..")
-(defcustom autotest-mode-working-directory nil "..")
+(require 'tramp)
+(require 'multi-term)
+(require 'multi-term-ext)
+(require 'notify)
 
-(defcustom autotest-mode-before-test-hook '() "..")
-(defcustom autotest-mode-after-test-hook '() "..")
-(defcustom autotest-mode-success-test-hook '() "..")
-(defcustom autotest-mode-fail-test-hook '() "..")
+(defvar autotest-mode-buffer nil
+  "..")
+
+(defcustom autotest-mode-buffer-name "autotest"
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-screen-session-name "autotest"
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-command nil
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-working-directory nil
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-before-test-hook '()
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-after-test-hook '()
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-success-test-hook '()
+  ".."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-fail-test-hook '()
+  ".."
+  :group 'autotest-mode)
 
 ;; Hooks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun autotest/add-before-hook (fname)
-  (interactive "aWhich function: ")
+  (interactive "sWhich function: ")
   (add-hook 'autotest-mode-before-test-hook fname t t))
 
 (defun autotest/add-after-hook (fname)
-  (interactive "aWhich function: ")
+  (interactive "sWhich function: ")
   (add-hook 'autotest-mode-after-test-hook fname t t))
 
 (defun autotest/add-success-test-hook (fname)
-  (interactive "aWhich function: ")
+  (interactive "sWhich function: ")
   (add-hook 'autotest-mode-success-test-hook fname t t))
 
 (defun autotest/add-fail-test-hook (fname)
-  (interactive "aWhich function: ")
+  (interactive "sWhich function: ")
   (add-hook 'autotest-mode-fail-test-hook fname t t))
 
 ;; Setting test command / function ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -56,7 +85,7 @@
 (defun autotest/set-command (command)
   (interactive
    (list
-    (read-string "aCommand: " autotest-mode-command)))
+    (read-string "Command: " autotest-mode-command)))
   (make-local-variable 'autotest-mode-command)
   (setq autotest-mode-command command))
 
@@ -85,23 +114,27 @@
 (defun autotest/begin-notification ()
   (interactive)
   (-autotest-mode-flash-modeline 0.3 "purple")
-  (message "running tests :-o"))
+  (message "running tests"))
 
 (defun autotest/succeed ()
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "green")
-  (run-with-timer 0.5 nil 'message "all tests pass \\o/"))
+  (notify "autotest-mode" "all tests pass \\o/")
+  ;;(run-with-timer 0.5 nil 'notify "autotest-mode" "all tests pass \\o/")
+  )
 
 (defun autotest/warning (&optional msg)
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "yellow")
   (when msg
-    (run-with-timer 0.5 nil 'message msg)))
+    (run-with-timer 0.5 nil 'notify "autotest-mode" msg)))
 
 (defun autotest/fail (&optional buffername)
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "red")
-  (run-with-timer 0.5 nil 'message "tests failed T_T"))
+  (notify "autotest-mode" "tests failed T_T")
+  ;;(run-with-timer 0.5 nil 'notify "autotest-mode" "tests failed T_T")
+  )
 
 ;; Process Filter setup ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -120,19 +153,18 @@ success, display messages to the minibuffer, etc.)"
       ((and (not (string-match "\"autotest_mode_test_success\"" output))
             (string-match "autotest_mode_test_success" output))
        (progn
-         (autotest-mode-succeed)
+         (autotest/succeed)
          (run-hooks 'autotest-mode-after-success-hook)))
       ;;
       ((and (not (string-match "\"autotest_mode_test_fail\"" output))
             (string-match "autotest_mode_test_fail" output))
        (progn
-         (autotest-mode-fail)
+         (autotest/fail)
          (pop-to-buffer autotest-mode-buffer)
          (run-hooks 'autotest-mode-after-fail-hook))))
      ;; call lower level process filter
      (run-hooks 'autotest-mode-after-test-hook)
      (if (fboundp #',orig-filter) (funcall ',orig-filter term-proc output))))
-
 
 ;; Buffer management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -144,13 +176,24 @@ success, display messages to the minibuffer, etc.)"
         (car l)
       (-autotest-mode-lookup-buffer (cdr l)))))
 
-(defun -autotest-mode-get-buffer ()
+(defun -autotest-mode-remote-info ()
+  (when (tramp-tramp-file-p default-directory)
+    (let* ((tramp-info  (tramp-dissect-file-name default-directory))
+           (remote-port (number-to-string (tramp-file-name-port tramp-info)))
+           (remote-host (format "%s@%s"
+                                (tramp-file-name-user tramp-info)
+                                (tramp-file-name-real-host tramp-info))))
+      `(("remote-port" . ,remote-port)
+        ("remote-host" . ,remote-host)))))
+
+(defun -autotest-mode-create-buffer ()
   (or (-autotest-mode-lookup-buffer (buffer-list))
-      (let* ((multi-term-buffer-name autotest-mode-buffer-name)
+      (let* ((remote-info (-autotest-mode-remote-info))
+             (multi-term-ext-remote-ssh-port (cdr (assoc "remote-port" remote-info)))
+             (multi-term-ext-remote-host (cdr (assoc "remote-host" remote-info)))
              (multi-term-ext-screen-session-name autotest-screen-session-name)
-             (term-buffer (if autotest-screen-session-name
-                              (multi-term-persistent)
-                            (multi-term-ext))))
+             (multi-term-buffer-name autotest-mode-buffer-name)
+             (term-buffer (multi-term-open-terminal)))
         (with-current-buffer term-buffer
           (term-send-raw-string "
 function autotest_mode_check_test_result {
@@ -161,36 +204,47 @@ function autotest_mode_check_test_result {
   fi
   return $?
 }\n"))
+        ;; making buffer and command local to this buffer only
         (-autotest-mode-decorate-process-filter (get-buffer-process term-buffer))
+        (setq autotest-mode-buffer term-buffer)
         term-buffer)))
 
 ;; Main functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defun -autotest-mode-get-working-directory (directory-path)
+  ;; if the file is remote, get the dir path without the
+  ;; tramp remote protocol crap
+  (if (tramp-tramp-file-p directory-path)
+      (tramp-file-name-localname
+       (tramp-dissect-file-name directory-path))
+    directory-path))
+
 (defun -autotest-mode-cd-to-working-directory ()
-  (let ((autotest-mode-working-directory (or autotest-mode-working-directory
-                                             default-directory)))
+  (let* ((autotest-mode-working-directory (-autotest-mode-get-working-directory
+                                           (or autotest-mode-working-directory
+                                               default-directory))))
     (with-current-buffer autotest-mode-buffer
       (term-send-raw-string (format "cd %s\n" autotest-mode-working-directory)))))
 
-(defun -autotest-mode-execute-command ()
+(defun -autotest-mode-execute-command (command)
+  (autotest/begin-notification)
   (cond
    ;; this is a function
-   ((symbolp autotest-mode-command)
-    (funcall autotest-mode-command))
-   ((stringp autotest-mode-command)
+   ((symbolp command)
+    (funcall command))
+   ((stringp command)
     (with-current-buffer autotest-mode-buffer
       (term-send-raw-string (format "{ %s; autotest_mode_check_test_result; }\n"
-                                    autotest-mode-command))))))
+                                    command))))))
 
-(defun autotest/run-tests (&optional cmd-or-fn)
+(defun autotest/run-tests ()
   (interactive)
-  (setq autotest-mode-command (or cmd-or-fn
-                                  autotest-mode-command
-                                  (read-from-minibuffer "Command: ")))
-  (make-local-variable 'autotest-mode-buffer)
-  (setq autotest-mode-buffer (-autotest-mode-get-buffer))
+  ;; (setq autotest-mode-command (or cmd-or-fn
+  ;;                                 autotest-mode-command
+  ;;                                 (read-from-minibuffer "Command: ")))
+  (-autotest-mode-create-buffer)
   (-autotest-mode-cd-to-working-directory)
-  (-autotest-mode-execute-command))
+  (-autotest-mode-execute-command autotest-mode-command))
 
 ;; After save utilities ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
