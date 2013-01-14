@@ -22,39 +22,68 @@
 (require 'multi-term-ext)
 (require 'notify)
 
+(defvar -autotest-mode-modeline-in-use nil
+  "Private var to check usage of modeline before changing")
+
+(defvar -autotest-mode-modeline-usage-delay 0.5
+  "Number of secs before trying to modify the modeline again.")
+
 (defvar autotest-mode-buffer nil
-  "..")
+  "Contains the buffer created by autotest")
 
 (defcustom autotest-mode-buffer-name "autotest"
-  ".."
+  "Specifies the name of the buffer created by autotest (the name
+is going to contain earmufs later on)."
+  :type 'string
   :group 'autotest-mode)
 
 (defcustom autotest-screen-session-name "autotest"
-  ".."
+  "Name of the GNU screen session name created for the autotest
+terminal"
+  :type 'string
   :group 'autotest-mode)
 
 (defcustom autotest-mode-command nil
-  ".."
+  "Command that gets executed. This variable is going to be buffer-local
+if setted with `autotest/set-command'."
   :group 'autotest-mode)
 
 (defcustom autotest-mode-working-directory nil
-  ".."
+  "The directory where the command test is executed."
+  :type 'string
   :group 'autotest-mode)
 
 (defcustom autotest-mode-before-test-hook '()
-  ".."
+  "Hook that is called before a test execution."
   :group 'autotest-mode)
 
 (defcustom autotest-mode-after-test-hook '()
-  ".."
+  "Hook that is called after a test execution."
   :group 'autotest-mode)
 
 (defcustom autotest-mode-success-test-hook '()
-  ".."
+  "Hook that is called after a successful test execution."
   :group 'autotest-mode)
 
 (defcustom autotest-mode-fail-test-hook '()
-  ".."
+  "Hook that is called after a failed test execution."
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-success-message nil
+  "String that will be shwon in the notification when tests
+  execution is successful."
+  :type 'string
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-failure-message nil
+  "String that will be shwon in the notification when tests
+  execution fails."
+  :type 'string
+  :group 'autotest-mode)
+
+(defcustom autotest-mode-popup-buffer-on-failure nil
+  "If true, pops out the autotest buffer with failure output."
+  :type 'bool
   :group 'autotest-mode)
 
 ;; Hooks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -100,28 +129,40 @@
 
 ;; Notifications ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defun -autotest-mode-restore-modeline (orig-modeline-fg)
+  (set-face-background 'modeline orig-modeline-fg)
+  (setq -autotest-mode-modeline-in-use nil))
+
 (defun -autotest-mode-flash-modeline (&optional time color)
   (interactive)
-  (let ((orig-modeline-fg (face-background 'modeline))
-        (time (or time 2))
-        (color (or color "#d70000")))
+  (if (not -autotest-mode-modeline-in-use)
+      (let ((orig-modeline-fg (face-background 'modeline))
+            (time (or time 2))
+            (color (or color "#d70000")))
+        (setq -autotest-mode-modeline-in-use t)
         (set-face-background 'modeline color)
         (run-with-timer time nil
-                        'set-face-background
-                        'modeline
-                        orig-modeline-fg)))
+                        '-autotest-mode-restore-modeline
+                        orig-modeline-fg))
+    (run-with-timer -autotest-mode-modeline-usage-delay nil
+                    '-autotest-mode-flash-modeline
+                    time
+                    color)))
 
 (defun autotest/begin-notification ()
   (interactive)
   (-autotest-mode-flash-modeline 0.3 "purple")
-  (message "running tests"))
+  (notify "autotest-mode"
+          (format "Executing `%s' in autotest buffer."
+                  autotest-mode-command)))
 
 (defun autotest/succeed ()
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "green")
-  (notify "autotest-mode" "all tests pass \\o/")
-  ;;(run-with-timer 0.5 nil 'notify "autotest-mode" "all tests pass \\o/")
-  )
+  (notify "autotest-mode"
+          (or autotest-mode-success-message
+              (format "Test command `%s' executed successfuly."
+                      autotest-mode-command))))
 
 (defun autotest/warning (&optional msg)
   (interactive)
@@ -132,9 +173,10 @@
 (defun autotest/fail (&optional buffername)
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "red")
-  (notify "autotest-mode" "tests failed T_T")
-  ;;(run-with-timer 0.5 nil 'notify "autotest-mode" "tests failed T_T")
-  )
+  (notify "autotest-mode"
+          (or autotest-mode-failure-message
+              (format "Test command `%s' failed."
+                      autotest-mode-command))))
 
 ;; Process Filter setup ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -150,17 +192,16 @@ various things (show cljsbuild buffer on errors, hide it on
 success, display messages to the minibuffer, etc.)"
   `(lambda (term-proc output)
      (cond
-      ((and (not (string-match "\"autotest_mode_test_success\"" output))
-            (string-match "autotest_mode_test_success" output))
+      ((string-match "[^\"]autotest_mode_test_success" output)
        (progn
          (autotest/succeed)
          (run-hooks 'autotest-mode-after-success-hook)))
       ;;
-      ((and (not (string-match "\"autotest_mode_test_fail\"" output))
-            (string-match "autotest_mode_test_fail" output))
+      ((string-match "[^\"]autotest_mode_test_fail" output)
        (progn
          (autotest/fail)
-         (pop-to-buffer autotest-mode-buffer)
+         (when autotest-mode-popup-buffer-on-failure
+           (pop-to-buffer autotest-mode-buffer))
          (run-hooks 'autotest-mode-after-fail-hook))))
      ;; call lower level process filter
      (run-hooks 'autotest-mode-after-test-hook)
@@ -193,7 +234,8 @@ success, display messages to the minibuffer, etc.)"
              (multi-term-ext-remote-host (cdr (assoc "remote-host" remote-info)))
              (multi-term-ext-screen-session-name autotest-screen-session-name)
              (multi-term-buffer-name autotest-mode-buffer-name)
-             (term-buffer (multi-term-open-terminal)))
+             (term-buffer (save-window-excursion
+                            (multi-term-open-terminal))))
         (with-current-buffer term-buffer
           (term-send-raw-string "
 function autotest_mode_check_test_result {
@@ -207,6 +249,7 @@ function autotest_mode_check_test_result {
         ;; making buffer and command local to this buffer only
         (-autotest-mode-decorate-process-filter (get-buffer-process term-buffer))
         (setq autotest-mode-buffer term-buffer)
+        (display-buffer term-buffer)
         term-buffer)))
 
 ;; Main functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -237,20 +280,28 @@ function autotest_mode_check_test_result {
       (term-send-raw-string (format "{ %s; autotest_mode_check_test_result; }\n"
                                     command))))))
 
+(defun autotest/kill-buffer ()
+  (interactive)
+  (with-current-buffer autotest-mode-buffer
+    (term-send-raw-string "exit\n"))
+  (setq autotest-mode-buffer nil)
+  (autotest/disable-after-save))
+
 (defun autotest/run-tests ()
   (interactive)
-  ;; (setq autotest-mode-command (or cmd-or-fn
-  ;;                                 autotest-mode-command
-  ;;                                 (read-from-minibuffer "Command: ")))
   (-autotest-mode-create-buffer)
   (-autotest-mode-cd-to-working-directory)
   (-autotest-mode-execute-command autotest-mode-command))
 
 ;; After save utilities ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; (defun autotest/enable-after-save ()
-;;   (interactive)
-;;   (dss/add-after-save-hook 'dss/autotest-run-tests))
+(defun autotest/enable-after-save ()
+  (interactive)
+  (add-hook 'after-save-hook 'autotest/run-tests t t))
+
+(defun autotest/disable-after-save ()
+  (interactive)
+  (remove-hook 'after-save-hook 'autotest/run-tests t))
 
 (provide 'autotest-mode)
 ;;; autotest-mode.el ends here
