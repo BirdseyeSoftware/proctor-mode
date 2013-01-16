@@ -183,7 +183,7 @@ if setted with `proctor/set-command'."
 (defun proctor/notify (header msg)
   (when (fboundp 'notify)
     (notify header msg))
-  (message msg))
+  (message (format "%s: %s" header msg)))
 
 (defun proctor/begin-notification ()
   (interactive)
@@ -337,11 +337,13 @@ function proctor_mode_check_test_result {
 
 (defun proctor/enable-after-save ()
   (interactive)
-  (add-hook 'after-save-hook 'proctor/run-tests t t))
+  (add-hook 'after-save-hook 'proctor/run-tests t t)
+  (proctor/notify "proctor-mode" "Supervising and enforcing!"))
 
 (defun proctor/disable-after-save ()
   (interactive)
-  (remove-hook 'after-save-hook 'proctor/run-tests t))
+  (remove-hook 'after-save-hook 'proctor/run-tests t)
+  (proctor/notify "proctor-mode" "Supervision is over"))
 
 (defalias 'proctor/on 'proctor/enable-after-save)
 (defalias 'proctor/off 'proctor/disable-after-save)
