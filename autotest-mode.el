@@ -340,5 +340,9 @@ function autotest_mode_check_test_result {
   (interactive)
   (remove-hook 'after-save-hook 'autotest/run-tests t))
 
+(defalias 'autotest/on 'autotest/enable-after-save)
+(defalias 'autotest/off 'autotest/disable-after-save)
+
+
 (provide 'autotest-mode)
 ;;; autotest-mode.el ends here
