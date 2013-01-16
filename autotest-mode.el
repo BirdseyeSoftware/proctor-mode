@@ -22,6 +22,8 @@
 (require 'multi-term-ext)
 (require 'notify)
 
+(defgroup autotest-mode '()  "...")
+
 (defvar -autotest-mode-modeline-in-use nil
   "Private var to check usage of modeline before changing")
 
@@ -84,6 +86,33 @@ if setted with `autotest/set-command'."
 (defcustom autotest-mode-popup-buffer-on-failure nil
   "If true, pops out the autotest buffer with failure output."
   :type 'bool
+  :group 'autotest-mode)
+
+
+(defface autotest-mode-failure-face
+  '((((class color) (background light))
+     :background "orange red") ;; TODO: Hard to read strings over
+    (((class color) (background dark))
+     :background "firebrick"))
+  "Face for failures in autotest-mode."
+  :group 'autotest-mode)
+
+;; (defface autotest-mode-error-face
+;;     '((((class color) (background light))
+;;             :background "orange1")
+;;           (((class color) (background dark))
+;;                 :background "orange4"))
+;;       "Face for errors in autotest-mode."
+;;         :group 'autotest-mode)
+
+(defface autotest-mode-success-face
+  '((((class color) (background light))
+     :foreground "black"
+     :background "green")
+    (((class color) (background dark))
+     :foreground "black"
+     :background "green"))
+  "Face for success in autotest-mode."
   :group 'autotest-mode)
 
 ;; Hooks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -149,20 +178,25 @@ if setted with `autotest/set-command'."
                     time
                     color)))
 
+(defun autotest/notify (header msg)
+  (notify header msg)
+  (message msg))
+
 (defun autotest/begin-notification ()
   (interactive)
   (-autotest-mode-flash-modeline 0.3 "purple")
-  (notify "autotest-mode"
-          (format "Executing `%s' in autotest buffer."
+  (autotest/notify "autotest-mode"
+          (format "TESTING: %s"
                   autotest-mode-command)))
-
 (defun autotest/succeed ()
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "green")
-  (notify "autotest-mode"
-          (or autotest-mode-success-message
-              (format "Test command `%s' executed successfuly."
-                      autotest-mode-command))))
+  (autotest/notify "autotest-mode"
+                   (or autotest-mode-success-message
+                       (propertize (format "SUCCESS: %s"
+                                           autotest-mode-command)
+                                   'face
+                                   'autotest-mode-success-face))))
 
 (defun autotest/warning (&optional msg)
   (interactive)
@@ -173,10 +207,12 @@ if setted with `autotest/set-command'."
 (defun autotest/fail (&optional buffername)
   (interactive)
   (-autotest-mode-flash-modeline 0.6 "red")
-  (notify "autotest-mode"
-          (or autotest-mode-failure-message
-              (format "Test command `%s' failed."
-                      autotest-mode-command))))
+  (autotest/notify "autotest-mode"
+                   (or autotest-mode-failure-message
+                       (propertize (format "FAILURE: %s"
+                                           autotest-mode-command)
+                                   'face
+                                   'autotest-mode-failure-face))))
 
 ;; Process Filter setup ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -192,12 +228,12 @@ various things (show cljsbuild buffer on errors, hide it on
 success, display messages to the minibuffer, etc.)"
   `(lambda (term-proc output)
      (cond
-      ((string-match "[^\"]autotest_mode_test_success" output)
+      ((string-match "autotest_mode_test_success" output)
        (progn
          (autotest/succeed)
          (run-hooks 'autotest-mode-after-success-hook)))
       ;;
-      ((string-match "[^\"]autotest_mode_test_fail" output)
+      ((string-match "autotest_mode_test_fail" output)
        (progn
          (autotest/fail)
          (when autotest-mode-popup-buffer-on-failure
@@ -238,11 +274,12 @@ success, display messages to the minibuffer, etc.)"
                             (multi-term-open-terminal))))
         (with-current-buffer term-buffer
           (term-send-raw-string "
+autotest_prefix=\"autotest_mode\"
 function autotest_mode_check_test_result {
   if [[ $? == 0 ]]; then
-    echo \"autotest_mode_test_success\"
+    echo \"${autotest_prefix}_test_success\"
   else
-    echo \"autotest_mode_test_fail\"
+    echo \"${autotest_prefix}_test_fail\"
   fi
   return $?
 }\n"))
