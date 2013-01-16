@@ -181,7 +181,8 @@ if setted with `proctor/set-command'."
                     color)))
 
 (defun proctor/notify (header msg)
-  (notify header msg)
+  (when (fboundp 'notify)
+    (notify header msg))
   (message msg))
 
 (defun proctor/begin-notification ()
