@@ -186,14 +186,22 @@ if setted with `proctor/set-command'."
                     time
                     color)))
 
-(defun proctor/notify (header msg)
+(defun proctor/notify (header msg &optional type)
   "Prints a message using notify & message."
   (when (fboundp 'notify)
     (notify header msg))
-  (message (format "%s: %s" header msg)))
+  (let ((full-msg (format "%s - %s" header msg)))
+    (message (propertize full-msg
+                         'face
+                         (cond
+                          ((not type) nil)
+                          ((eq type 'succcess) 'proctor-mode-success-face)
+                          ((eq type 'failure)  'proctor-mode-failure-face)
+                          ((eq type 'warning)  'proctor-mode-warning-face)
+                          (t nil))))))
 
 (defun proctor/begin-notification ()
-  "Starts a notification."
+  "Notifies when a test is about to run."
   (interactive)
   (-proctor-mode-flash-modeline 0.3 "purple")
   (proctor/notify "proctor-mode"
@@ -201,45 +209,39 @@ if setted with `proctor/set-command'."
                   proctor-mode-command)))
 
 (defun proctor/succeed ()
+  "Notifies when a test succeeded."
   (interactive)
   (-proctor-mode-flash-modeline 0.6 "green")
   (proctor/notify "proctor-mode"
-                   (or proctor-mode-success-message
-                       (propertize (format "SUCCESS: %s"
-                                           proctor-mode-command)
-                                   'face
-                                   'proctor-mode-success-face))))
+                  (or (format "SUCCESS: %s"
+                              proctor-mode-command)
+                      proctor-mode-success-message)
+                  'success))
 
 (defun proctor/warning (&optional msg)
+  "Notifies when a there is some sort of error/warning."
   (interactive)
   (-proctor-mode-flash-modeline 0.6 "yellow")
   (when msg
-    (proctor/notify "proctor-mode" (propertize msg
-                                               'face
-                                               'proctor-mode-warning-face))))
+    (proctor/notify "proctor-mode" msg 'warning)))
 
 (defun proctor/fail (&optional buffername)
+  "Notifies when the test failed. "
   (interactive)
   (-proctor-mode-flash-modeline 0.6 "red")
   (proctor/notify "proctor-mode"
                    (or proctor-mode-failure-message
-                       (propertize (format "FAILURE: %s"
-                                           proctor-mode-command)
-                                   'face
-                                   'proctor-mode-failure-face))))
+                       (format "FAILURE: %s"
+                               proctor-mode-command))
+                   'failure))
 
 ;; Process Filter setup ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun -proctor-mode-decorate-process-filter (term-proc)
-  "Decorates the existing process filter that exists on the term
-buffer with the cljsbuild-mode one"
   (set-process-filter term-proc
                       (-proctor-mode-process-filter (process-filter term-proc))))
 
 (defun -proctor-mode-process-filter (orig-filter)
-  "This process filter tracks the key output of cljsbuild to do
-various things (show cljsbuild buffer on errors, hide it on
-success, display messages to the minibuffer, etc.)"
   `(lambda (term-proc output)
      (cond
       ((string-match "proctor_mode_test_success" output)
