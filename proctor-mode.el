@@ -24,7 +24,8 @@
 (require 'multi-term-ext)
 (require 'notify)
 
-(defgroup proctor-mode '()  "...")
+(defgroup proctor-mode '()
+  "proctor-mode: Supervising and enforcing your \"test-driven\" since 2013")
 
 (defvar -proctor-mode-modeline-in-use nil
   "Private var to check usage of modeline before changing")
@@ -99,13 +100,13 @@ if setted with `proctor/set-command'."
   "Face for failures in proctor-mode."
   :group 'proctor-mode)
 
-;; (defface proctor-mode-error-face
-;;     '((((class color) (background light))
-;;             :background "orange1")
-;;           (((class color) (background dark))
-;;                 :background "orange4"))
-;;       "Face for errors in proctor-mode."
-;;         :group 'proctor-mode)
+(defface proctor-mode-warning-face
+    '((((class color) (background light))
+            :background "orange1")
+          (((class color) (background dark))
+                :background "orange4"))
+      "Face for errors in proctor-mode."
+        :group 'proctor-mode)
 
 (defface proctor-mode-success-face
   '((((class color) (background light))
@@ -119,11 +120,11 @@ if setted with `proctor/set-command'."
 
 ;; Hooks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun proctor/add-before-hook (fname)
+(defun proctor/add-before-test-hook (fname)
   (interactive "sWhich function: ")
   (add-hook 'proctor-mode-before-test-hook fname t t))
 
-(defun proctor/add-after-hook (fname)
+(defun proctor/add-after-test-hook (fname)
   (interactive "sWhich function: ")
   (add-hook 'proctor-mode-after-test-hook fname t t))
 
@@ -138,11 +139,16 @@ if setted with `proctor/set-command'."
 ;; Setting test command / function ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun proctor/set-function (fname)
+  "Tell proctor which elisp function to run after save.
+
+   NOTE: you will have to call `proctor/success' or
+   `proctor/error' accordingly in your function."
   (interactive "aWhich function: ")
   (make-local-variable 'proctor-mode-command)
   (setq proctor-mode-command fname))
 
 (defun proctor/set-command (command)
+  "Tell proctor which command to run after save."
   (interactive
    (list
     (read-string "Command: " proctor-mode-command)))
@@ -181,16 +187,19 @@ if setted with `proctor/set-command'."
                     color)))
 
 (defun proctor/notify (header msg)
+  "Prints a message using notify & message."
   (when (fboundp 'notify)
     (notify header msg))
   (message (format "%s: %s" header msg)))
 
 (defun proctor/begin-notification ()
+  "Starts a notification."
   (interactive)
   (-proctor-mode-flash-modeline 0.3 "purple")
   (proctor/notify "proctor-mode"
           (format "TESTING: %s"
                   proctor-mode-command)))
+
 (defun proctor/succeed ()
   (interactive)
   (-proctor-mode-flash-modeline 0.6 "green")
@@ -205,7 +214,9 @@ if setted with `proctor/set-command'."
   (interactive)
   (-proctor-mode-flash-modeline 0.6 "yellow")
   (when msg
-    (run-with-timer 0.5 nil 'notify "proctor-mode" msg)))
+    (proctor/notify "proctor-mode" (propertize msg
+                                               'face
+                                               'proctor-mode-warning-face))))
 
 (defun proctor/fail (&optional buffername)
   (interactive)
@@ -248,13 +259,6 @@ success, display messages to the minibuffer, etc.)"
 
 ;; Buffer management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun -proctor-mode-lookup-buffer (l)
-  (when l
-    (if (and (eq 'term-mode (with-current-buffer (car l) major-mode))
-             (string=  (format "*%s*" proctor-mode-buffer-name)
-                       (with-current-buffer (car l) (buffer-name))))
-        (car l)
-      (-proctor-mode-lookup-buffer (cdr l)))))
 
 (defun -proctor-mode-remote-info ()
   (when (tramp-tramp-file-p default-directory)
@@ -267,16 +271,17 @@ success, display messages to the minibuffer, etc.)"
         ("remote-host" . ,remote-host)))))
 
 (defun -proctor-mode-create-buffer ()
-  (or (-proctor-mode-lookup-buffer (buffer-list))
-      (let* ((remote-info (-proctor-mode-remote-info))
-             (multi-term-ext-remote-ssh-port (cdr (assoc "remote-port" remote-info)))
-             (multi-term-ext-remote-host (cdr (assoc "remote-host" remote-info)))
-             (multi-term-ext-screen-session-name proctor-screen-session-name)
-             (multi-term-buffer-name proctor-mode-buffer-name)
-             (term-buffer (save-window-excursion
-                            (multi-term-open-terminal))))
-        (with-current-buffer term-buffer
-          (term-send-raw-string "
+  (or
+   (get-buffer (format "*%s*" proctor-mode-buffer-name))
+   (let* ((remote-info (-proctor-mode-remote-info))
+          (multi-term-ext-remote-ssh-port (cdr (assoc "remote-port" remote-info)))
+          (multi-term-ext-remote-host (cdr (assoc "remote-host" remote-info)))
+          (multi-term-ext-screen-session-name proctor-screen-session-name)
+          (multi-term-buffer-name proctor-mode-buffer-name)
+          (term-buffer (save-window-excursion
+                         (multi-term-open-terminal))))
+     (with-current-buffer term-buffer
+       (term-send-raw-string "
 proctor_prefix=\"proctor_mode\"
 function proctor_mode_check_test_result {
   if [[ $? == 0 ]]; then
@@ -286,11 +291,11 @@ function proctor_mode_check_test_result {
   fi
   return $?
 }\n"))
-        ;; making buffer and command local to this buffer only
-        (-proctor-mode-decorate-process-filter (get-buffer-process term-buffer))
-        (setq proctor-mode-buffer term-buffer)
-        (display-buffer term-buffer)
-        term-buffer)))
+     ;; making buffer and command local to this buffer only
+     (-proctor-mode-decorate-process-filter (get-buffer-process term-buffer))
+     (setq proctor-mode-buffer term-buffer)
+     (display-buffer term-buffer)
+     term-buffer)))
 
 ;; Main functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -310,17 +315,21 @@ function proctor_mode_check_test_result {
       (term-send-raw-string (format "cd %s\n" proctor-mode-working-directory)))))
 
 (defun -proctor-mode-execute-command (command)
-  (proctor/begin-notification)
-  (cond
-   ;; this is a function
-   ((symbolp command)
-    (funcall command))
-   ((stringp command)
-    (with-current-buffer proctor-mode-buffer
-      (term-send-raw-string (format "{ %s; proctor_mode_check_test_result; }\n"
-                                    command))))))
+  (if (not command)
+      (proctor/warning "ERROR: M-x `proctor/set-command' to configure proctor")
+    (progn
+      (proctor/begin-notification)
+      (cond
+       ;; this is a function
+       ((symbolp command)
+        (funcall command))
+       ((stringp command)
+        (with-current-buffer proctor-mode-buffer
+          (term-send-raw-string (format "{ %s; proctor_mode_check_test_result; }\n"
+                                        command))))))))
 
 (defun proctor/kill-buffer ()
+  "Kill proctor buffer."
   (interactive)
   (with-current-buffer proctor-mode-buffer
     (term-send-raw-string "exit\n"))
@@ -328,6 +337,7 @@ function proctor_mode_check_test_result {
   (proctor/disable-after-save))
 
 (defun proctor/run-tests ()
+  "Manually run tests."
   (interactive)
   (-proctor-mode-create-buffer)
   (-proctor-mode-cd-to-working-directory)
@@ -336,17 +346,21 @@ function proctor_mode_check_test_result {
 ;; After save utilities ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun proctor/enable-after-save ()
+  "Start supervising file saves to run tests."
   (interactive)
   (add-hook 'after-save-hook 'proctor/run-tests t t)
   (proctor/notify "proctor-mode" "Supervising and enforcing!"))
 
 (defun proctor/disable-after-save ()
+  "Stop supervising file saves to run tests."
   (interactive)
   (remove-hook 'after-save-hook 'proctor/run-tests t)
   (proctor/notify "proctor-mode" "Supervision is over"))
 
 (defalias 'proctor/on 'proctor/enable-after-save)
 (defalias 'proctor/off 'proctor/disable-after-save)
+(defalias 'proctor/start 'proctor/enable-after-save)
+(defalias 'proctor/stop 'proctor/disable-after-save)
 
 
 (provide 'proctor-mode)
